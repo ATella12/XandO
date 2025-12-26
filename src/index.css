@@ -1,0 +1,44 @@
+:root {
+  font-family: 'Trebuchet MS', 'Segoe UI', Verdana, sans-serif;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #1c1a1f;
+  background-color: #f2efe8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --page-bg: radial-gradient(circle at top, #fff4d6 0%, #f2efe8 55%, #f0e4d2 100%);
+  --card-bg: #ffffff;
+  --ink: #1c1a1f;
+  --muted: #6c6671;
+  --accent: #ff7a4a;
+  --accent-dark: #e65f2a;
+  --shadow: 0 18px 40px rgba(43, 33, 18, 0.12);
+  --border: rgba(18, 17, 20, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+}
+
+#root {
+  width: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
