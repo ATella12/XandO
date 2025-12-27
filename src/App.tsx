@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { sdk } from '@farcaster/miniapp-sdk'
 import { useConnect } from 'wagmi'
-import { base, baseSepolia } from 'wagmi/chains'
 import './App.css'
 import WalletPanel from './WalletPanel'
 import { useGameContractTx } from './useGameContractTx'
@@ -96,14 +95,11 @@ function App({ isMiniApp, walletReady }: AppProps) {
     status: txStatus,
     isPending: isTxPending,
     address,
-    chainId,
     expectedChainId,
     expectedChainName,
     needsChainSwitch,
     switchChainAsync,
     isSwitching,
-    sendMethod,
-    lastError,
   } = useGameContractTx()
   const { connect, connectors, isPending: isConnectPending } = useConnect()
   const aiTimeoutRef = useRef<number | null>(null)
@@ -258,14 +254,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
   }
 
   const canSend = !!address && !needsChainSwitch && !isTxPending
-  const chainLabel =
-    chainId === base.id
-      ? base.name
-      : chainId === baseSepolia.id
-        ? baseSepolia.name
-        : chainId
-          ? `Chain ${chainId}`
-          : 'Unknown'
 
   return (
     <div className="app">
@@ -357,36 +345,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
           {walletSection}
         </section>
       )}
-      <div className="panel" style={{ marginTop: '1.5rem' }}>
-        <h2>Debug</h2>
-        <p className="subtitle">Connection and transaction diagnostics.</p>
-        <div className="wallet">
-          <div className="wallet-row">
-            <span className="wallet-label">Address</span>
-            <span className="wallet-value">{address ?? 'Not connected'}</span>
-          </div>
-          <div className="wallet-row">
-            <span className="wallet-label">Chain</span>
-            <span className="wallet-value">
-              {chainLabel} {chainId ? `(${chainId})` : ''}
-            </span>
-          </div>
-          <div className="wallet-row">
-            <span className="wallet-label">Send method</span>
-            <span className="wallet-value">{sendMethod}</span>
-          </div>
-          <div className="wallet-row">
-            <span className="wallet-label">Last error</span>
-            <span className="wallet-value">
-              {lastError
-                ? [lastError.shortMessage, lastError.message, lastError.details, lastError.cause]
-                    .filter(Boolean)
-                    .join(' | ')
-                : 'None'}
-            </span>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
