@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   useAccount,
   useChainId,
+  useSendCalls,
   useSwitchChain,
-  useWaitForTransactionReceipt,
-  useWriteContract,
+  useWaitForCallsStatus,
 } from 'wagmi'
 import { base } from 'wagmi/chains'
+import { Attribution } from 'ox/erc8021'
 import { gameContractAbi, gameContractAddress } from './contract'
 
 type TxState = 'idle' | 'needs_wallet' | 'sending' | 'sent' | 'confirmed' | 'cancelled' | 'error'
@@ -17,6 +18,9 @@ type TxStatus = {
   hash?: `0x${string}`
 }
 
+const BUILDER_CODE = 'bc_ynopiw2i'
+const BUILDER_DATA_SUFFIX = Attribution.toDataSuffix({ codes: [BUILDER_CODE] })
+
 const isUserRejected = (error: unknown) => {
   const err = error as { code?: number; message?: string }
   return err?.code === 4001 || err?.message?.toLowerCase().includes('user rejected')
@@ -26,23 +30,33 @@ export const useGameContractTx = () => {
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
   const { switchChainAsync } = useSwitchChain()
-  const { writeContractAsync } = useWriteContract()
+  const { sendCallsAsync } = useSendCalls()
   const [status, setStatus] = useState<TxStatus>({ state: 'idle' })
+  const [callId, setCallId] = useState<string | null>(null)
   const resetTimeoutRef = useRef<number | null>(null)
 
-  const { data: receipt, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash: status.hash,
-    chainId: base.id,
+  const { data: callsStatus } = useWaitForCallsStatus({
+    id: callId ?? undefined,
     query: {
-      enabled: !!status.hash,
+      enabled: !!callId,
     },
   })
 
   useEffect(() => {
-    if (isConfirmed && receipt?.transactionHash) {
-      setStatus({ state: 'confirmed', hash: receipt.transactionHash })
+    if (!callId || !callsStatus?.status) return
+
+    if (callsStatus.status === 'success') {
+      const receiptHash = callsStatus.receipts?.[0]?.transactionHash
+      setStatus({ state: 'confirmed', hash: receiptHash })
+      setCallId(null)
+      return
     }
-  }, [isConfirmed, receipt?.transactionHash])
+
+    if (callsStatus.status === 'failure') {
+      setStatus({ state: 'error', message: 'Transaction failed.' })
+      setCallId(null)
+    }
+  }, [callId, callsStatus?.receipts, callsStatus?.status])
 
   useEffect(() => {
     if (resetTimeoutRef.current !== null) {
@@ -111,19 +125,27 @@ export const useGameContractTx = () => {
     async (functionName: 'recordStart' | 'recordPlayAgain') => {
       const ok = await ensureReady()
       if (!ok) return
-      if (!writeContractAsync) {
+      if (!sendCallsAsync) {
         setStatus({ state: 'error', message: 'Transaction failed.' })
         return
       }
       try {
         setStatus({ state: 'sending' })
-        const hash = await writeContractAsync({
-          address: gameContractAddress!,
-          abi: gameContractAbi,
-          functionName,
+        const result = await sendCallsAsync({
+          calls: [
+            {
+              to: gameContractAddress!,
+              abi: gameContractAbi,
+              functionName,
+            },
+          ],
           chainId: base.id,
+          capabilities: {
+            dataSuffix: BUILDER_DATA_SUFFIX,
+          },
         })
-        setStatus({ state: 'sent', hash })
+        setCallId(result.id)
+        setStatus({ state: 'sent' })
       } catch (error) {
         if (isUserRejected(error)) {
           setStatus({ state: 'cancelled', message: 'Transaction cancelled.' })
@@ -132,7 +154,7 @@ export const useGameContractTx = () => {
         }
       }
     },
-    [ensureReady, writeContractAsync],
+    [ensureReady, sendCallsAsync],
   )
 
   const recordStart = useCallback(async () => {
