@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { sdk } from '@farcaster/miniapp-sdk'
-import { useConnect } from 'wagmi'
 import './App.css'
 import WalletPanel from './WalletPanel'
 import { useGameContractTx } from './useGameContractTx'
@@ -101,7 +100,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
     switchChainAsync,
     isSwitching,
   } = useGameContractTx()
-  const { connect, connectors, isPending: isConnectPending } = useConnect()
   const aiTimeoutRef = useRef<number | null>(null)
   const aiThinkingRef = useRef(false)
   const boardRef = useRef(board)
@@ -243,11 +241,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
     <div className="wallet wallet-loading">Wallet: loading...</div>
   )
 
-  const handleConnect = () => {
-    if (connectors.length === 0) return
-    connect({ connector: connectors[0] })
-  }
-
   const handleSwitchChain = async () => {
     if (!switchChainAsync) return
     await switchChainAsync({ chainId: expectedChainId })
@@ -280,11 +273,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
           <button className="primary" onClick={handleStart} disabled={!mode || isTxPending}>
             {isTxPending ? 'Sending...' : 'Start Game'}
           </button>
-          {!address && (
-            <button className="ghost" onClick={handleConnect} disabled={isConnectPending}>
-              {isConnectPending ? 'Connecting...' : 'Connect Wallet'}
-            </button>
-          )}
           {needsChainSwitch && (
             <button className="ghost" onClick={handleSwitchChain} disabled={isSwitching}>
               {isSwitching ? 'Switching...' : `Switch to ${expectedChainName}`}
@@ -292,9 +280,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
           )}
           {!canSend && address && needsChainSwitch && (
             <p className="subtitle">Wrong network: switch to {expectedChainName}.</p>
-          )}
-          {!canSend && !address && (
-            <p className="subtitle">Connect a wallet to send transactions.</p>
           )}
           {walletSection}
         </section>
@@ -327,11 +312,6 @@ function App({ isMiniApp, walletReady }: AppProps) {
               <button className="primary" onClick={handlePlayAgain} disabled={isTxPending}>
                 {isTxPending ? 'Sending...' : 'Play Again'}
               </button>
-              {!address && (
-                <button className="ghost" onClick={handleConnect} disabled={isConnectPending}>
-                  {isConnectPending ? 'Connecting...' : 'Connect Wallet'}
-                </button>
-              )}
               {needsChainSwitch && (
                 <button className="ghost" onClick={handleSwitchChain} disabled={isSwitching}>
                   {isSwitching ? 'Switching...' : `Switch to ${expectedChainName}`}
