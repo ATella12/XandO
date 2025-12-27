@@ -211,6 +211,17 @@ export const useGameContractTx = () => {
     return true
   }, [address, chainId, isConnected, switchChainAsync])
 
+  const buildCallData = useCallback(
+    (functionName: 'recordStart' | 'recordPlayAgain') => {
+      const baseData = encodeFunctionData({
+        abi: gameContractAbi,
+        functionName,
+      }) as Hex
+      return appendBuilderCodeToCalldata(baseData, BUILDER_CODE)
+    },
+    [],
+  )
+
   const simulateWrite = useCallback(
     async (functionName: 'recordStart' | 'recordPlayAgain', includeSuffix: boolean) => {
       if (!publicClient) {
@@ -248,11 +259,8 @@ export const useGameContractTx = () => {
         throw new Error('sendTransaction is unavailable.')
       }
       await simulateWrite(functionName, true)
-      const baseData = encodeFunctionData({
-        abi: gameContractAbi,
-        functionName,
-      }) as Hex
-      const data = appendBuilderCodeToCalldata(baseData, BUILDER_CODE)
+      const data = buildCallData(functionName)
+      console.log('tx data len', data.length, data.slice(0, 10))
       return await sendTransactionAsync({
         to: gameContractAddress!,
         data,
@@ -260,7 +268,7 @@ export const useGameContractTx = () => {
         chainId: base.id,
       })
     },
-    [sendTransactionAsync, simulateWrite],
+    [buildCallData, sendTransactionAsync, simulateWrite],
   )
 
   const sendContractCall = useCallback(
@@ -272,19 +280,17 @@ export const useGameContractTx = () => {
         if (sendCallsAsync) {
           try {
             setSendMethod('sendCalls')
+            const data = buildCallData(functionName)
+            console.log('tx data len', data.length, data.slice(0, 10))
             const result = await sendCallsAsync({
               calls: [
                 {
                   to: gameContractAddress!,
-                  abi: gameContractAbi,
-                  functionName,
+                  data,
                 },
               ],
               chainId: base.id,
               account: address,
-              capabilities: {
-                dataSuffix: { data: BUILDER_DATA_SUFFIX },
-              },
             })
             setCallId(result.id)
             setStatus({ state: 'sent' })
@@ -293,12 +299,13 @@ export const useGameContractTx = () => {
             console.error('sendCalls failed', error)
             if (isCapabilitiesError(error)) {
               try {
+                const data = buildCallData(functionName)
+                console.log('tx data len', data.length, data.slice(0, 10))
                 const result = await sendCallsAsync({
                   calls: [
                     {
                       to: gameContractAddress!,
-                      abi: gameContractAbi,
-                      functionName,
+                      data,
                     },
                   ],
                   chainId: base.id,
@@ -328,6 +335,8 @@ export const useGameContractTx = () => {
         }
 
         setSendMethod('writeContract')
+        const data = buildCallData(functionName)
+        console.log('tx data len', data.length, data.slice(0, 10))
         const hash = await sendWithWriteContract(functionName, true)
         setTxHash(hash)
         setStatus({ state: 'sent', hash })
