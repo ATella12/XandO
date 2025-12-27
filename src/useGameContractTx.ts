@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   useAccount,
   useChainId,
+  usePublicClient,
   useSendCalls,
   useSwitchChain,
   useWaitForCallsStatus,
+  useWaitForTransactionReceipt,
+  useWriteContract,
 } from 'wagmi'
 import { base } from 'wagmi/chains'
 import { Attribution } from 'ox/erc8021'
@@ -18,6 +21,15 @@ type TxStatus = {
   hash?: `0x${string}`
 }
 
+type DebugError = {
+  message: string
+  shortMessage?: string
+  details?: string
+  cause?: string
+  stack?: string
+  raw?: string
+}
+
 const BUILDER_CODE = 'bc_ynopiw2i'
 const BUILDER_DATA_SUFFIX = Attribution.toDataSuffix({ codes: [BUILDER_CODE] })
 
@@ -26,13 +38,60 @@ const isUserRejected = (error: unknown) => {
   return err?.code === 4001 || err?.message?.toLowerCase().includes('user rejected')
 }
 
+const isSendCallsUnsupported = (error: unknown) => {
+  const err = error as { name?: string; message?: string; shortMessage?: string }
+  const haystack = `${err?.name ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
+  return (
+    haystack.includes('wallet_sendcalls') ||
+    haystack.includes('sendcalls') ||
+    haystack.includes('eip-5792') ||
+    haystack.includes('method not found') ||
+    haystack.includes('method not supported')
+  )
+}
+
+const maybeDataSuffixError = (error: unknown) => {
+  const err = error as { message?: string; shortMessage?: string }
+  const haystack = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
+  return haystack.includes('datasuffix') || haystack.includes('suffix') || haystack.includes('attribution')
+}
+
+const toDebugError = (error: unknown): DebugError => {
+  if (error instanceof Error) {
+    const err = error as Error & {
+      shortMessage?: string
+      details?: string
+      cause?: { shortMessage?: string; message?: string }
+    }
+    return {
+      message: err.message,
+      shortMessage: err.shortMessage,
+      details: err.details,
+      cause: err.cause ? err.cause.shortMessage ?? err.cause.message : undefined,
+      stack: err.stack,
+      raw: JSON.stringify(err, Object.getOwnPropertyNames(err)),
+    }
+  }
+  return {
+    message: 'Unknown error',
+    raw: JSON.stringify(error),
+  }
+}
+
 export const useGameContractTx = () => {
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
-  const { switchChainAsync } = useSwitchChain()
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain()
   const { sendCallsAsync } = useSendCalls()
+  const { writeContractAsync } = useWriteContract()
+  const publicClient = usePublicClient({ chainId: base.id })
   const [status, setStatus] = useState<TxStatus>({ state: 'idle' })
   const [callId, setCallId] = useState<string | null>(null)
+  const [txHash, setTxHash] = useState<`0x${string}` | null>(null)
+  const [lastError, setLastError] = useState<DebugError | null>(null)
+  const [sendMethod, setSendMethod] = useState<
+    'sendCalls' | 'writeContract' | 'writeContract-fallback' | 'none'
+  >('none')
   const resetTimeoutRef = useRef<number | null>(null)
 
   const { data: callsStatus } = useWaitForCallsStatus({
@@ -54,9 +113,28 @@ export const useGameContractTx = () => {
 
     if (callsStatus.status === 'failure') {
       setStatus({ state: 'error', message: 'Transaction failed.' })
+      setLastError({
+        message: 'Call bundle failed.',
+        details: callsStatus.statusCode ? `statusCode=${callsStatus.statusCode}` : undefined,
+      })
       setCallId(null)
     }
-  }, [callId, callsStatus?.receipts, callsStatus?.status])
+  }, [callId, callsStatus?.receipts, callsStatus?.status, callsStatus?.statusCode])
+
+  const { data: receipt, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash ?? undefined,
+    chainId: base.id,
+    query: {
+      enabled: !!txHash,
+    },
+  })
+
+  useEffect(() => {
+    if (isConfirmed && receipt?.transactionHash) {
+      setStatus({ state: 'confirmed', hash: receipt.transactionHash })
+      setTxHash(null)
+    }
+  }, [isConfirmed, receipt?.transactionHash])
 
   useEffect(() => {
     if (resetTimeoutRef.current !== null) {
@@ -89,6 +167,7 @@ export const useGameContractTx = () => {
   }, [status.state])
 
   const ensureReady = useCallback(async () => {
+    setLastError(null)
     if (!isConnected || !address) {
       setStatus({ state: 'needs_wallet', message: 'Connect your wallet to start.' })
       return false
@@ -96,6 +175,7 @@ export const useGameContractTx = () => {
 
     if (!gameContractAddress) {
       setStatus({ state: 'error', message: 'Missing contract address.' })
+      setLastError({ message: 'Missing contract address.' })
       return false
     }
 
@@ -109,7 +189,9 @@ export const useGameContractTx = () => {
       }
       try {
         await switchChainAsync({ chainId: base.id })
-      } catch {
+      } catch (error) {
+        console.error('switchChain failed', error)
+        setLastError(toDebugError(error))
         setStatus({
           state: 'error',
           message: 'Please switch to Base to send the transaction.',
@@ -121,32 +203,91 @@ export const useGameContractTx = () => {
     return true
   }, [address, chainId, isConnected, switchChainAsync])
 
+  const simulateWrite = useCallback(
+    async (functionName: 'recordStart' | 'recordPlayAgain', includeSuffix: boolean) => {
+      if (!publicClient) {
+        throw new Error('Public client not available for simulation.')
+      }
+      const simulation = await publicClient.simulateContract({
+        address: gameContractAddress!,
+        abi: gameContractAbi,
+        functionName,
+        account: address ?? undefined,
+        dataSuffix: includeSuffix ? BUILDER_DATA_SUFFIX : undefined,
+      })
+      return simulation.request
+    },
+    [address, publicClient],
+  )
+
+  const sendWithWriteContract = useCallback(
+    async (functionName: 'recordStart' | 'recordPlayAgain', includeSuffix: boolean) => {
+      if (!writeContractAsync) {
+        throw new Error('writeContract is unavailable.')
+      }
+      const request = await simulateWrite(functionName, includeSuffix)
+      return await writeContractAsync({
+        ...request,
+        dataSuffix: includeSuffix ? BUILDER_DATA_SUFFIX : undefined,
+      })
+    },
+    [simulateWrite, writeContractAsync],
+  )
+
   const sendContractCall = useCallback(
     async (functionName: 'recordStart' | 'recordPlayAgain') => {
       const ok = await ensureReady()
       if (!ok) return
-      if (!sendCallsAsync) {
-        setStatus({ state: 'error', message: 'Transaction failed.' })
-        return
-      }
       try {
         setStatus({ state: 'sending' })
-        const result = await sendCallsAsync({
-          calls: [
-            {
-              to: gameContractAddress!,
-              abi: gameContractAbi,
-              functionName,
-            },
-          ],
-          chainId: base.id,
-          capabilities: {
-            dataSuffix: BUILDER_DATA_SUFFIX,
-          },
-        })
-        setCallId(result.id)
-        setStatus({ state: 'sent' })
+        if (sendCallsAsync) {
+          try {
+            setSendMethod('sendCalls')
+            const result = await sendCallsAsync({
+              calls: [
+                {
+                  to: gameContractAddress!,
+                  abi: gameContractAbi,
+                  functionName,
+                },
+              ],
+              chainId: base.id,
+              account: address,
+              capabilities: {
+                dataSuffix: BUILDER_DATA_SUFFIX,
+              },
+            })
+            setCallId(result.id)
+            setStatus({ state: 'sent' })
+            return
+          } catch (error) {
+            console.error('sendCalls failed', error)
+            if (!isSendCallsUnsupported(error)) {
+              throw error
+            }
+          }
+        }
+
+        setSendMethod('writeContract')
+        try {
+          const hash = await sendWithWriteContract(functionName, true)
+          setTxHash(hash)
+          setStatus({ state: 'sent', hash })
+          return
+        } catch (error) {
+          console.error('writeContract with dataSuffix failed', error)
+          if (!maybeDataSuffixError(error)) {
+            throw error
+          }
+        }
+
+        setSendMethod('writeContract-fallback')
+        const hash = await sendWithWriteContract(functionName, false)
+        setTxHash(hash)
+        setStatus({ state: 'sent', hash })
       } catch (error) {
+        console.error('transaction error', error)
+        setLastError(toDebugError(error))
         if (isUserRejected(error)) {
           setStatus({ state: 'cancelled', message: 'Transaction cancelled.' })
         } else {
@@ -154,7 +295,7 @@ export const useGameContractTx = () => {
         }
       }
     },
-    [ensureReady, sendCallsAsync],
+    [address, ensureReady, sendCallsAsync, sendWithWriteContract],
   )
 
   const recordStart = useCallback(async () => {
@@ -166,6 +307,22 @@ export const useGameContractTx = () => {
   }, [sendContractCall])
 
   const isPending = status.state === 'sending'
+  const expectedChainName = base.name
+  const needsChainSwitch = chainId !== base.id
 
-  return { recordStart, recordPlayAgain, status, isPending }
+  return {
+    recordStart,
+    recordPlayAgain,
+    status,
+    isPending,
+    address,
+    chainId,
+    expectedChainId: base.id,
+    expectedChainName,
+    needsChainSwitch,
+    switchChainAsync,
+    isSwitching,
+    sendMethod,
+    lastError,
+  }
 }
