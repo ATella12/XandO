@@ -4,14 +4,16 @@ import {
   useChainId,
   usePublicClient,
   useSendCalls,
+  useSendTransaction,
   useSwitchChain,
   useWaitForCallsStatus,
   useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi'
 import { base } from 'wagmi/chains'
-import { Attribution } from 'ox/erc8021'
+import { encodeFunctionData, type Hex } from 'viem'
 import { gameContractAbi, gameContractAddress } from './contract'
+import { appendBuilderCodeToCalldata, buildDataSuffix } from './lib/baseAttribution'
 
 type TxState = 'idle' | 'needs_wallet' | 'sending' | 'sent' | 'confirmed' | 'cancelled' | 'error'
 
@@ -31,7 +33,7 @@ type DebugError = {
 }
 
 const BUILDER_CODE = 'bc_ynopiw2i'
-const BUILDER_DATA_SUFFIX = Attribution.toDataSuffix({ codes: [BUILDER_CODE] })
+const BUILDER_DATA_SUFFIX = buildDataSuffix(BUILDER_CODE)
 
 const isUserRejected = (error: unknown) => {
   const err = error as { code?: number; message?: string }
@@ -61,12 +63,6 @@ const isCapabilitiesError = (error: unknown) => {
   )
 }
 
-const maybeDataSuffixError = (error: unknown) => {
-  const err = error as { message?: string; shortMessage?: string }
-  const haystack = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
-  return haystack.includes('datasuffix') || haystack.includes('suffix') || haystack.includes('attribution')
-}
-
 const toDebugError = (error: unknown): DebugError => {
   if (error instanceof Error) {
     const err = error as Error & {
@@ -94,6 +90,7 @@ export const useGameContractTx = () => {
   const chainId = useChainId()
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain()
   const { sendCallsAsync } = useSendCalls()
+  const { sendTransactionAsync } = useSendTransaction()
   const { writeContractAsync } = useWriteContract()
   const publicClient = usePublicClient({ chainId: base.id })
   const [status, setStatus] = useState<TxStatus>({ state: 'idle' })
@@ -101,7 +98,7 @@ export const useGameContractTx = () => {
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null)
   const [lastError, setLastError] = useState<DebugError | null>(null)
   const [sendMethod, setSendMethod] = useState<
-    'sendCalls' | 'writeContract' | 'writeContract-fallback' | 'none'
+    'sendCalls' | 'sendTransaction' | 'writeContract' | 'none'
   >('none')
   const resetTimeoutRef = useRef<number | null>(null)
 
@@ -245,6 +242,27 @@ export const useGameContractTx = () => {
     [simulateWrite, writeContractAsync],
   )
 
+  const sendWithManualTransaction = useCallback(
+    async (functionName: 'recordStart' | 'recordPlayAgain') => {
+      if (!sendTransactionAsync) {
+        throw new Error('sendTransaction is unavailable.')
+      }
+      await simulateWrite(functionName, true)
+      const baseData = encodeFunctionData({
+        abi: gameContractAbi,
+        functionName,
+      }) as Hex
+      const data = appendBuilderCodeToCalldata(baseData, BUILDER_CODE)
+      return await sendTransactionAsync({
+        to: gameContractAddress!,
+        data,
+        value: 0n,
+        chainId: base.id,
+      })
+    },
+    [sendTransactionAsync, simulateWrite],
+  )
+
   const sendContractCall = useCallback(
     async (functionName: 'recordStart' | 'recordPlayAgain') => {
       const ok = await ensureReady()
@@ -299,21 +317,18 @@ export const useGameContractTx = () => {
           }
         }
 
-        setSendMethod('writeContract')
+        setSendMethod('sendTransaction')
         try {
-          const hash = await sendWithWriteContract(functionName, true)
+          const hash = await sendWithManualTransaction(functionName)
           setTxHash(hash)
           setStatus({ state: 'sent', hash })
           return
         } catch (error) {
-          console.error('writeContract with dataSuffix failed', error)
-          if (!maybeDataSuffixError(error)) {
-            throw error
-          }
+          console.error('sendTransaction with appended data failed', error)
         }
 
-        setSendMethod('writeContract-fallback')
-        const hash = await sendWithWriteContract(functionName, false)
+        setSendMethod('writeContract')
+        const hash = await sendWithWriteContract(functionName, true)
         setTxHash(hash)
         setStatus({ state: 'sent', hash })
       } catch (error) {
@@ -326,7 +341,7 @@ export const useGameContractTx = () => {
         }
       }
     },
-    [address, ensureReady, sendCallsAsync, sendWithWriteContract],
+    [address, ensureReady, sendCallsAsync, sendWithManualTransaction, sendWithWriteContract],
   )
 
   const recordStart = useCallback(async () => {
