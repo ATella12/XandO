@@ -23,6 +23,16 @@ const outputs = [
     width: 1200,
     height: 630,
   },
+  {
+    file: "farcaster-screenshot-1.png",
+    width: 1284,
+    height: 2778,
+  },
+  {
+    file: "farcaster-image.png",
+    width: 1200,
+    height: 800,
+  },
 ];
 
 async function ensureSource() {
