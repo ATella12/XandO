@@ -1,0 +1,25 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjE2MTQ1MzIsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHg5NjJBNUYzMjNmNTk4YTI3ZDE0Q2NGM0JmYjAyZDc4ZjcyNTY0Y2YwIn0",
+    "payload": "eyJkb21haW4iOiJ4YW5kby1jaGkudmVyY2VsLmFwcCJ9",
+    "signature": "aY2Rt9eJemC5rWk7XCtWXRXO1LSy7oxXFU2M947F+y1y57xK3nFnFKjpPbew5pAPd5KehJQLVXYTJt7fKbKHhRw="
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "XandO",
+    "homeUrl": "https://xando-chi.vercel.app",
+    "iconUrl": "https://xando-chi.vercel.app/farcaster-icon.png",
+    "splashImageUrl": "https://xando-chi.vercel.app/farcaster-splash.png",
+    "splashBackgroundColor": "#5a3bfd",
+    "subtitle": "Tic-tac-toe",
+    "description": "Play XandO in single-player or multiplayer, with Base wallet actions.",
+    "primaryCategory": "games",
+    "tags": ["games", "tic-tac-toe", "base", "xando"],
+    "heroImageUrl": "https://xando-chi.vercel.app/farcaster-og.png",
+    "ogTitle": "XandO",
+    "ogDescription": "Tic-tac-toe mini app on Farcaster.",
+    "ogImageUrl": "https://xando-chi.vercel.app/farcaster-og.png",
+    "requiredChains": ["eip155:8453"],
+    "requiredCapabilities": ["wallet.getEthereumProvider"]
+  }
+}
