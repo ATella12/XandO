@@ -50,6 +50,17 @@ const isSendCallsUnsupported = (error: unknown) => {
   )
 }
 
+const isCapabilitiesError = (error: unknown) => {
+  const err = error as { message?: string; shortMessage?: string }
+  const haystack = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
+  return (
+    haystack.includes('capabilities') ||
+    haystack.includes('datasuffix') ||
+    haystack.includes('dataSuffix') ||
+    haystack.includes('invalid params')
+  )
+}
+
 const maybeDataSuffixError = (error: unknown) => {
   const err = error as { message?: string; shortMessage?: string }
   const haystack = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
@@ -254,7 +265,7 @@ export const useGameContractTx = () => {
               chainId: base.id,
               account: address,
               capabilities: {
-                dataSuffix: BUILDER_DATA_SUFFIX,
+                dataSuffix: { data: BUILDER_DATA_SUFFIX },
               },
             })
             setCallId(result.id)
@@ -262,6 +273,26 @@ export const useGameContractTx = () => {
             return
           } catch (error) {
             console.error('sendCalls failed', error)
+            if (isCapabilitiesError(error)) {
+              try {
+                const result = await sendCallsAsync({
+                  calls: [
+                    {
+                      to: gameContractAddress!,
+                      abi: gameContractAbi,
+                      functionName,
+                    },
+                  ],
+                  chainId: base.id,
+                  account: address,
+                })
+                setCallId(result.id)
+                setStatus({ state: 'sent' })
+                return
+              } catch (retryError) {
+                console.error('sendCalls retry without capabilities failed', retryError)
+              }
+            }
             if (!isSendCallsUnsupported(error)) {
               throw error
             }
