@@ -1,10 +1,62 @@
 import { Attribution } from 'ox/erc8021'
-import { concatHex, type Hex } from 'viem'
+import { type Hex } from 'viem'
 
-export function buildDataSuffix(code: string): Hex {
-  return Attribution.toDataSuffix({ codes: [code] }) as Hex
+let didWarnMissing = false
+let didLogActive = false
+
+const normalizeHex = (value?: string): Hex => {
+  if (!value) return '0x'
+  if (value === '0x') return '0x'
+  return (`0x${value.startsWith('0x') ? value.slice(2) : value}`.toLowerCase()) as Hex
 }
 
-export function appendBuilderCodeToCalldata(calldata: Hex, code: string): Hex {
-  return concatHex([calldata, buildDataSuffix(code)])
+const ensureHex = (value?: string): Hex | undefined => {
+  if (!value) return undefined
+  const normalized = normalizeHex(value)
+  return normalized === '0x' ? undefined : normalized
+}
+
+export function getBuilderCode(): string | undefined {
+  const code =
+    import.meta.env.NEXT_PUBLIC_BASE_BUILDER_CODE ??
+    import.meta.env.VITE_BASE_BUILDER_CODE ??
+    undefined
+
+  if (!code && !didWarnMissing) {
+    console.warn(
+      'Base builder code is missing. Set NEXT_PUBLIC_BASE_BUILDER_CODE to enable attribution.',
+    )
+    didWarnMissing = true
+  }
+
+  if (code && import.meta.env.DEV && !didLogActive) {
+    console.log(`[Base Attribution] active: ${code}`)
+    didLogActive = true
+  }
+
+  return code
+}
+
+export function getDataSuffix(): Hex | undefined {
+  const code = getBuilderCode()
+  if (!code) return undefined
+  const suffix = Attribution.toDataSuffix({ codes: [code] }) as Hex
+  return ensureHex(suffix)
+}
+
+export function appendBuilderCodeToCalldata(calldata: Hex, code?: string): Hex {
+  if (!code) return calldata
+  const dataSuffix = ensureHex(Attribution.toDataSuffix({ codes: [code] }) as Hex)
+  if (!dataSuffix) return normalizeHex(calldata)
+
+  const normalizedCalldata = normalizeHex(calldata)
+  const normalizedSuffix = normalizeHex(dataSuffix)
+
+  if (normalizedCalldata === '0x') return normalizedSuffix
+
+  const suffixBody = normalizedSuffix.slice(2)
+  const calldataBody = normalizedCalldata.slice(2)
+  if (calldataBody.endsWith(suffixBody)) return normalizedCalldata
+
+  return (`0x${calldataBody}${suffixBody}`.toLowerCase()) as Hex
 }
