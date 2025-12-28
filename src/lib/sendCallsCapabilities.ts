@@ -1,5 +1,7 @@
+import type { EIP1193RequestFn, WalletRpcSchema } from 'viem'
+
 type WalletClientLike = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
+  request: EIP1193RequestFn<WalletRpcSchema>
 }
 
 let cachedDataSuffixSupport: boolean | null = null
@@ -43,7 +45,10 @@ export const getSendCallsDataSuffixSupport = async (walletClient?: WalletClientL
 
   cachedDataSuffixSupportPromise = (async () => {
     try {
-      const capabilities = await walletClient.request({
+      const capabilities = await (walletClient.request as unknown as (args: {
+        method: string
+        params?: unknown[]
+      }) => Promise<unknown>)({
         method: 'wallet_getCapabilities',
         params: [],
       })

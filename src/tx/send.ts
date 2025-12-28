@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import type { Address, EIP1193RequestFn, Hex, WalletRpcSchema } from 'viem'
 import {
   appendSuffixToCall,
   getBuilderCode,
@@ -39,7 +39,7 @@ export type SendTransactionFn = (args: {
 }) => Promise<Hex>
 
 export type WalletClientLike = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
+  request: EIP1193RequestFn<WalletRpcSchema>
 }
 
 export type PublicClientLike = {
