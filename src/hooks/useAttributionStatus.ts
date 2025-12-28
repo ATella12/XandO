@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useWalletClient } from 'wagmi'
-import { getBuilderCode, getDataSuffix } from '../lib/baseAttribution'
+import { getBuilderCode, getDataSuffix, getForceManualBuilderSuffix } from '../lib/baseAttribution'
 import { getSendCallsDataSuffixSupport } from '../lib/sendCallsCapabilities'
 
 export type AttributionMode = 'capabilities' | 'manual' | 'off'
@@ -11,12 +11,20 @@ export const useAttributionStatus = () => {
 
   const builderCode = getBuilderCode()
   const builderCodePresent = !!builderCode
+  const forceManual = getForceManualBuilderSuffix()
   const dataSuffix = getDataSuffix()
 
   useEffect(() => {
     let active = true
     if (!import.meta.env.DEV || !builderCodePresent || !dataSuffix) {
       setDataSuffixSupported(null)
+      return () => {
+        active = false
+      }
+    }
+
+    if (forceManual) {
+      setDataSuffixSupported(false)
       return () => {
         active = false
       }
@@ -33,14 +41,15 @@ export const useAttributionStatus = () => {
     return () => {
       active = false
     }
-  }, [builderCodePresent, dataSuffix, walletClient])
+  }, [builderCodePresent, dataSuffix, forceManual, walletClient])
 
   const mode = useMemo<AttributionMode>(() => {
     if (!builderCodePresent) return 'off'
+    if (forceManual) return 'manual'
     if (dataSuffixSupported === true) return 'capabilities'
     if (dataSuffixSupported === false) return 'manual'
     return 'off'
-  }, [builderCodePresent, dataSuffixSupported])
+  }, [builderCodePresent, dataSuffixSupported, forceManual])
 
   return {
     builderCodePresent,

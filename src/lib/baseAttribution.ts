@@ -37,6 +37,15 @@ export function getBuilderCode(): string | undefined {
   return code
 }
 
+export function getForceManualBuilderSuffix(): boolean {
+  const value =
+    import.meta.env.NEXT_PUBLIC_FORCE_BUILDER_SUFFIX_MANUAL ??
+    import.meta.env.VITE_FORCE_BUILDER_SUFFIX_MANUAL ??
+    undefined
+  if (!value) return false
+  return ['true', '1', 'yes'].includes(String(value).toLowerCase())
+}
+
 export function getDataSuffix(): Hex | undefined {
   const code = getBuilderCode()
   if (!code) return undefined
@@ -57,6 +66,13 @@ export function hasDataSuffix(calldata: Hex, dataSuffix?: Hex): boolean {
 
 export function appendBuilderCodeToCallData(calldata: Hex): Hex {
   return appendBuilderCodeToCalldata(calldata, getBuilderCode())
+}
+
+export function appendSuffixToCall<T extends { data?: Hex }>(call: T, code?: string): T {
+  return {
+    ...call,
+    data: appendBuilderCodeToCalldata(call.data ?? '0x', code),
+  }
 }
 
 export function appendBuilderCodeToCalldata(calldata: Hex, code?: string): Hex {

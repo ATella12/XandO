@@ -13,14 +13,8 @@ import {
 import { base } from 'wagmi/chains'
 import { encodeFunctionData, type Hex } from 'viem'
 import { gameContractAbi, gameContractAddress } from './contract'
-import {
-  appendBuilderCodeToCalldata,
-  getBuilderCode,
-  getDataSuffix,
-  hasDataSuffix,
-  normalizeHex,
-} from './lib/baseAttribution'
-import { getSendCallsDataSuffixSupport } from './lib/sendCallsCapabilities'
+import { sendXandOTx } from './tx/send'
+import { getBuilderCode } from './lib/baseAttribution'
 
 type TxState = 'idle' | 'needs_wallet' | 'sending' | 'sent' | 'confirmed' | 'cancelled' | 'error'
 
@@ -39,36 +33,9 @@ type DebugError = {
   raw?: string
 }
 
-let didLogSendCallsSuffix = false
-let didLogSendCallsSupport = false
-let didLogSendCallsManualFallback = false
-
 const isUserRejected = (error: unknown) => {
   const err = error as { code?: number; message?: string }
   return err?.code === 4001 || err?.message?.toLowerCase().includes('user rejected')
-}
-
-const isSendCallsUnsupported = (error: unknown) => {
-  const err = error as { name?: string; message?: string; shortMessage?: string }
-  const haystack = `${err?.name ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
-  return (
-    haystack.includes('wallet_sendcalls') ||
-    haystack.includes('sendcalls') ||
-    haystack.includes('eip-5792') ||
-    haystack.includes('method not found') ||
-    haystack.includes('method not supported')
-  )
-}
-
-const isCapabilitiesError = (error: unknown) => {
-  const err = error as { message?: string; shortMessage?: string }
-  const haystack = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`.toLowerCase()
-  return (
-    haystack.includes('capabilities') ||
-    haystack.includes('datasuffix') ||
-    haystack.includes('dataSuffix') ||
-    haystack.includes('invalid params')
-  )
 }
 
 const toDebugError = (error: unknown): DebugError => {
@@ -107,6 +74,10 @@ export const useGameContractTx = () => {
   const [lastError, setLastError] = useState<DebugError | null>(null)
   const [sendMethod, setSendMethod] = useState<'sendCalls' | 'sendTransaction' | 'none'>('none')
   const resetTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    getBuilderCode()
+  }, [])
 
   const { data: callsStatus } = useWaitForCallsStatus({
     id: callId ?? undefined,
@@ -227,167 +198,38 @@ export const useGameContractTx = () => {
     [],
   )
 
-  const buildManualCallData = useCallback(
-    (functionName: 'recordStart' | 'recordPlayAgain') => {
-      const baseData = buildBaseCallData(functionName)
-      return appendBuilderCodeToCalldata(baseData, getBuilderCode())
-    },
-    [buildBaseCallData],
-  )
-
-  const simulateManualCall = useCallback(
-    async (data: Hex) => {
-      if (!publicClient) {
-        throw new Error('Public client not available for simulation.')
-      }
-      await publicClient.call({
-        to: gameContractAddress!,
-        account: address ?? undefined,
-        data,
-      })
-    },
-    [address, publicClient],
-  )
-
-  const sendWithManualTransaction = useCallback(
-    async (functionName: 'recordStart' | 'recordPlayAgain') => {
-      if (!sendTransactionAsync) {
-        throw new Error('sendTransaction is unavailable.')
-      }
-      const data = buildManualCallData(functionName)
-      await simulateManualCall(data)
-      console.log('tx data len', data.length, data.slice(0, 10))
-      return await sendTransactionAsync({
-        to: gameContractAddress!,
-        data,
-        value: 0n,
-        chainId: base.id,
-      })
-    },
-    [buildManualCallData, sendTransactionAsync, simulateManualCall],
-  )
-
   const sendContractCall = useCallback(
     async (functionName: 'recordStart' | 'recordPlayAgain') => {
       const ok = await ensureReady()
       if (!ok) return
       try {
         setStatus({ state: 'sending' })
-        if (sendCallsAsync) {
-          try {
-            setSendMethod('sendCalls')
-            const data = buildBaseCallData(functionName)
-            console.log('tx data len', data.length, data.slice(0, 10))
-            const dataSuffix = getDataSuffix()
-            const builderCode = getBuilderCode()
-            const supportsDataSuffix =
-              dataSuffix && builderCode
-                ? await getSendCallsDataSuffixSupport(walletClient ?? undefined)
-                : false
-
-            if (import.meta.env.DEV && !didLogSendCallsSupport) {
-              console.log(`[Base Attribution] sendCalls dataSuffix supported: ${supportsDataSuffix}`)
-              didLogSendCallsSupport = true
-            }
-
-            if (dataSuffix && supportsDataSuffix && !didLogSendCallsSuffix && import.meta.env.DEV) {
-              console.log('[Base Attribution] using sendCalls dataSuffix')
-              didLogSendCallsSuffix = true
-            }
-
-            const calls = [
-              {
-                to: gameContractAddress!,
-                data: data ?? '0x',
-              },
-            ]
-
-            const callsToSend =
-              dataSuffix && builderCode && !supportsDataSuffix
-                ? calls.map((call) => ({
-                    ...call,
-                    data: appendBuilderCodeToCalldata(call.data ?? '0x', builderCode),
-                  }))
-                : calls
-
-            if (import.meta.env.DEV && dataSuffix && builderCode && !supportsDataSuffix) {
-              if (!didLogSendCallsManualFallback) {
-                console.log('[Base Attribution] using manual append fallback for sendCalls')
-                didLogSendCallsManualFallback = true
-              }
-              callsToSend.forEach((call) => {
-                const normalized = normalizeHex(call.data)
-                if (!hasDataSuffix(call.data, dataSuffix)) {
-                  console.warn('[Base Attribution] manual append missing from call data')
-                }
-                if (/^0x[0-9a-f]{8}$/.test(normalized)) {
-                  console.warn(
-                    '[Base Attribution] manual append expected to increase calldata length',
-                  )
-                }
-              })
-            }
-
-            const result = await sendCallsAsync({
-              calls: callsToSend,
-              chainId: base.id,
-              account: address,
-              capabilities: dataSuffix && supportsDataSuffix ? { dataSuffix } : undefined,
-            })
-            setCallId(result.id)
-            setStatus({ state: 'sent' })
-            return
-          } catch (error) {
-            console.error('sendCalls failed', error)
-            if (isCapabilitiesError(error)) {
-              try {
-                const data = buildBaseCallData(functionName)
-                console.log('tx data len', data.length, data.slice(0, 10))
-                const builderCode = getBuilderCode()
-                const dataSuffix = getDataSuffix()
-                const calls = [
-                  {
-                    to: gameContractAddress!,
-                    data: data ?? '0x',
-                  },
-                ]
-                const callsToSend =
-                  dataSuffix && builderCode
-                    ? calls.map((call) => ({
-                        ...call,
-                        data: appendBuilderCodeToCalldata(call.data ?? '0x', builderCode),
-                      }))
-                    : calls
-                if (import.meta.env.DEV && dataSuffix && builderCode && !didLogSendCallsManualFallback) {
-                  console.log('[Base Attribution] using manual append fallback for sendCalls')
-                  didLogSendCallsManualFallback = true
-                }
-                const result = await sendCallsAsync({
-                  calls: callsToSend,
-                  chainId: base.id,
-                  account: address,
-                })
-                setCallId(result.id)
-                setStatus({ state: 'sent' })
-                return
-              } catch (retryError) {
-                console.error('sendCalls retry without capabilities failed', retryError)
-              }
-            }
-            if (!isSendCallsUnsupported(error)) {
-              throw error
-            }
-          }
-        }
-
-        setSendMethod('sendTransaction')
-        try {
-          const hash = await sendWithManualTransaction(functionName)
-          setTxHash(hash)
-          setStatus({ state: 'sent', hash })
+        const data = buildBaseCallData(functionName)
+        console.log('tx data len', data.length, data.slice(0, 10))
+        const result = await sendXandOTx({
+          calls: [
+            {
+              to: gameContractAddress!,
+              data,
+            },
+          ],
+          chainId: base.id,
+          account: address ?? undefined,
+          sendCallsAsync: sendCallsAsync ?? undefined,
+          sendTransactionAsync: sendTransactionAsync ?? undefined,
+          walletClient: walletClient ?? undefined,
+          publicClient: publicClient ?? undefined,
+        })
+        setSendMethod(result.method)
+        if (result.method === 'sendCalls' && result.id) {
+          setCallId(result.id)
+          setStatus({ state: 'sent' })
           return
-        } catch (error) {
-          console.error('sendTransaction with appended data failed', error)
+        }
+        if (result.method === 'sendTransaction' && result.hash) {
+          setTxHash(result.hash)
+          setStatus({ state: 'sent', hash: result.hash })
+          return
         }
       } catch (error) {
         console.error('transaction error', error)
@@ -399,7 +241,15 @@ export const useGameContractTx = () => {
         }
       }
     },
-    [address, buildBaseCallData, ensureReady, sendCallsAsync, sendWithManualTransaction],
+    [
+      address,
+      buildBaseCallData,
+      ensureReady,
+      publicClient,
+      sendCallsAsync,
+      sendTransactionAsync,
+      walletClient,
+    ],
   )
 
   const recordStart = useCallback(async () => {
