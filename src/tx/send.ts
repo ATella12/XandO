@@ -101,6 +101,14 @@ const logSendMode = (mode: AttributionMode, dataSuffix?: Hex) => {
   console.log(`[Base Attribution] mode: ${mode}, suffix prefix: ${prefix}`)
 }
 
+const logSendAttempt = (mode: AttributionMode, builderCode?: string, dataSuffix?: Hex) => {
+  if (!import.meta.env.DEV) return
+  const prefix = dataSuffix ? dataSuffix.slice(0, 10) : 'n/a'
+  console.log(
+    `[Base Attribution] send attempt: mode=${mode}, builder=${!!builderCode}, suffix=${prefix}`,
+  )
+}
+
 const warnManualChecks = (calls: SendCall[], dataSuffix?: Hex) => {
   if (!import.meta.env.DEV || !dataSuffix) return
   calls.forEach((call) => {
@@ -147,6 +155,7 @@ export const sendXandOTx = async (args: SendXandOTxArgs): Promise<SendXandOTxRes
   }))
 
   logSendMode(mode, dataSuffix)
+  logSendAttempt(mode, builderCode, dataSuffix)
 
   if (sendCallsAsync) {
     const useCapabilities = mode === 'capabilities'

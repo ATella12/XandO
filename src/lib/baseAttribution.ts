@@ -4,6 +4,11 @@ import { type Hex } from 'viem'
 let didWarnMissing = false
 let didLogActive = false
 
+const getViteEnv = () => (import.meta as any)?.env
+const getNextEnv = () => (typeof process !== 'undefined' ? process.env : undefined)
+const isDev = () => getViteEnv()?.DEV === true || getNextEnv()?.NODE_ENV === 'development'
+const isProd = () => getViteEnv()?.PROD === true || getNextEnv()?.NODE_ENV === 'production'
+
 export const normalizeHex = (value?: string): Hex => {
   if (!value) return '0x'
   if (value === '0x') return '0x'
@@ -17,19 +22,16 @@ export const ensureHex = (value?: string): Hex | undefined => {
 }
 
 export function getBuilderCode(): string | undefined {
-  const code =
-    import.meta.env.NEXT_PUBLIC_BASE_BUILDER_CODE ??
-    import.meta.env.VITE_BASE_BUILDER_CODE ??
-    undefined
+  const viteEnv = getViteEnv()
+  const nextEnv = getNextEnv()
+  const code = viteEnv?.VITE_BASE_BUILDER_CODE ?? nextEnv?.NEXT_PUBLIC_BASE_BUILDER_CODE ?? undefined
 
-  if (!code && import.meta.env.DEV && !didWarnMissing) {
-    console.warn(
-      'Base builder code is missing. Set NEXT_PUBLIC_BASE_BUILDER_CODE to enable attribution.',
-    )
+  if (!code && isProd() && !didWarnMissing) {
+    console.warn('[Base Attribution] builder code missing in client build; attribution OFF')
     didWarnMissing = true
   }
 
-  if (code && import.meta.env.DEV && !didLogActive) {
+  if (code && isDev() && !didLogActive) {
     console.log(`[Base Attribution] active: ${code}`)
     didLogActive = true
   }
@@ -38,9 +40,11 @@ export function getBuilderCode(): string | undefined {
 }
 
 export function getForceManualBuilderSuffix(): boolean {
+  const viteEnv = getViteEnv()
+  const nextEnv = getNextEnv()
   const value =
-    import.meta.env.NEXT_PUBLIC_FORCE_BUILDER_SUFFIX_MANUAL ??
-    import.meta.env.VITE_FORCE_BUILDER_SUFFIX_MANUAL ??
+    viteEnv?.VITE_FORCE_BUILDER_SUFFIX_MANUAL ??
+    nextEnv?.NEXT_PUBLIC_FORCE_BUILDER_SUFFIX_MANUAL ??
     undefined
   if (!value) return false
   return ['true', '1', 'yes'].includes(String(value).toLowerCase())
