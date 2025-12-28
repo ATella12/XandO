@@ -4,13 +4,13 @@ import { type Hex } from 'viem'
 let didWarnMissing = false
 let didLogActive = false
 
-const normalizeHex = (value?: string): Hex => {
+export const normalizeHex = (value?: string): Hex => {
   if (!value) return '0x'
   if (value === '0x') return '0x'
   return (`0x${value.startsWith('0x') ? value.slice(2) : value}`.toLowerCase()) as Hex
 }
 
-const ensureHex = (value?: string): Hex | undefined => {
+export const ensureHex = (value?: string): Hex | undefined => {
   if (!value) return undefined
   const normalized = normalizeHex(value)
   return normalized === '0x' ? undefined : normalized
@@ -22,7 +22,7 @@ export function getBuilderCode(): string | undefined {
     import.meta.env.VITE_BASE_BUILDER_CODE ??
     undefined
 
-  if (!code && !didWarnMissing) {
+  if (!code && import.meta.env.DEV && !didWarnMissing) {
     console.warn(
       'Base builder code is missing. Set NEXT_PUBLIC_BASE_BUILDER_CODE to enable attribution.',
     )
@@ -42,6 +42,21 @@ export function getDataSuffix(): Hex | undefined {
   if (!code) return undefined
   const suffix = Attribution.toDataSuffix({ codes: [code] }) as Hex
   return ensureHex(suffix)
+}
+
+export function hasDataSuffix(calldata: Hex, dataSuffix?: Hex): boolean {
+  if (!dataSuffix) return false
+  const normalizedCalldata = normalizeHex(calldata)
+  const normalizedSuffix = normalizeHex(dataSuffix)
+  if (normalizedCalldata === '0x') return false
+
+  const suffixBody = normalizedSuffix.slice(2)
+  const calldataBody = normalizedCalldata.slice(2)
+  return calldataBody.endsWith(suffixBody)
+}
+
+export function appendBuilderCodeToCallData(calldata: Hex): Hex {
+  return appendBuilderCodeToCalldata(calldata, getBuilderCode())
 }
 
 export function appendBuilderCodeToCalldata(calldata: Hex, code?: string): Hex {
