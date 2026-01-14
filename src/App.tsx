@@ -1,13 +1,40 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { sdk } from '@farcaster/miniapp-sdk'
+import {
+  useAccount,
+  useChainId,
+  useConnect,
+  useSwitchChain,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from 'wagmi'
+import { base } from 'wagmi/chains'
 import './App.css'
 import WalletPanel from './WalletPanel'
 import { useGameContractTx } from './useGameContractTx'
+import { MENU_TX_VALUE, menuContractAbis, menuContractAddresses } from './lib/menuContracts'
 
 type Cell = 'X' | 'O' | null
 type Board = Cell[]
 type Mode = 'single' | 'multi'
 type Winner = 'X' | 'O' | null
+type Screen = 'home' | 'menu'
+type MenuAction = keyof typeof menuContractAddresses
+type MenuStatus = {
+  state: 'idle' | 'needs_wallet' | 'switching' | 'confirming' | 'submitted' | 'confirmed' | 'error'
+  message?: string
+  hash?: `0x${string}`
+}
+
+const getScreenFromHash = (): Screen => {
+  if (typeof window === 'undefined') return 'home'
+  return window.location.hash === '#/menu' ? 'menu' : 'home'
+}
+
+const isUserRejected = (error: unknown) => {
+  const err = error as { code?: number; message?: string }
+  return err?.code === 4001 || err?.message?.toLowerCase().includes('user rejected')
+}
 
 const winningLines: number[][] = [
   [0, 1, 2],
@@ -88,6 +115,14 @@ function App({ isMiniApp, walletReady }: AppProps) {
   const [mode, setMode] = useState<Mode | null>(null)
   const [board, setBoard] = useState<Board>(Array(9).fill(null))
   const [currentPlayer, setCurrentPlayer] = useState<'X' | 'O'>('X')
+  const [screen, setScreen] = useState<Screen>(() => getScreenFromHash())
+  const [menuStatus, setMenuStatus] = useState<MenuStatus>({ state: 'idle' })
+  const [menuTxHash, setMenuTxHash] = useState<`0x${string}` | null>(null)
+  const { address: walletAddress, isConnected } = useAccount()
+  const chainId = useChainId()
+  const { connectAsync, connectors, isPending: isConnecting } = useConnect()
+  const { switchChainAsync: switchChainAsyncMenu, isPending: isSwitchingMenu } = useSwitchChain()
+  const { writeContractAsync, isPending: isWriting } = useWriteContract()
   const {
     recordStart,
     recordPlayAgain,
@@ -114,6 +149,14 @@ function App({ isMiniApp, walletReady }: AppProps) {
     } catch {
       // Mini App SDK may not be available in a normal browser.
     }
+  }, [])
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setScreen(getScreenFromHash())
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
   const winner = useMemo(() => getWinner(board), [board])
@@ -228,6 +271,89 @@ function App({ isMiniApp, walletReady }: AppProps) {
     setCurrentPlayer('X')
   }
 
+  const handleConnectWallet = async () => {
+    if (isConnected) return
+    const connector = connectors[0]
+    if (!connector) {
+      setMenuStatus({ state: 'error', message: 'No wallet connector available.' })
+      return
+    }
+    try {
+      setMenuStatus({ state: 'confirming', message: 'Open your wallet to connect.' })
+      await connectAsync({ connector })
+      setMenuStatus({ state: 'idle' })
+    } catch (error) {
+      if (isUserRejected(error)) {
+        setMenuStatus({ state: 'error', message: 'Connection cancelled.' })
+      } else {
+        setMenuStatus({ state: 'error', message: 'Connection failed.' })
+      }
+    }
+  }
+
+  const handleMenuAction = async (action: MenuAction) => {
+    if (!isConnected || !walletAddress) {
+      setMenuStatus({ state: 'needs_wallet', message: 'Connect your wallet to continue.' })
+      return
+    }
+
+    if (chainId !== base.id) {
+      if (!switchChainAsyncMenu) {
+        setMenuStatus({ state: 'error', message: 'Please switch to Base to send the transaction.' })
+        return
+      }
+      try {
+        setMenuStatus({ state: 'switching', message: 'Switching to Base...' })
+        await switchChainAsyncMenu({ chainId: base.id })
+      } catch (error) {
+        setMenuStatus({ state: 'error', message: 'Please switch to Base to send the transaction.' })
+        return
+      }
+    }
+
+    try {
+      setMenuStatus({ state: 'confirming', message: 'Confirm in your wallet...' })
+      const hash = await writeContractAsync({
+        address: menuContractAddresses[action],
+        abi: menuContractAbis[action],
+        functionName: action,
+        value: MENU_TX_VALUE,
+        chainId: base.id,
+      })
+      setMenuTxHash(hash)
+      setMenuStatus({ state: 'submitted', message: 'Submitted.', hash })
+    } catch (error) {
+      if (isUserRejected(error)) {
+        setMenuStatus({ state: 'error', message: 'Transaction cancelled.' })
+      } else {
+        setMenuStatus({ state: 'error', message: 'Transaction failed.' })
+      }
+    }
+  }
+
+  const { data: menuReceipt, isSuccess: isMenuConfirmed } = useWaitForTransactionReceipt({
+    hash: menuTxHash ?? undefined,
+    chainId: base.id,
+    query: {
+      enabled: !!menuTxHash,
+    },
+  })
+
+  useEffect(() => {
+    if (isMenuConfirmed && menuReceipt?.transactionHash) {
+      setMenuStatus({ state: 'confirmed', message: 'Confirmed.', hash: menuReceipt.transactionHash })
+      setMenuTxHash(null)
+    }
+  }, [isMenuConfirmed, menuReceipt?.transactionHash])
+
+  const navigateTo = (next: Screen) => {
+    setScreen(next)
+    const nextHash = next === 'menu' ? '#/menu' : '#/'
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash
+    }
+  }
+
   const statusText = useMemo(() => {
     if (winner === 'X') return 'Player X wins!'
     if (winner === 'O') return 'Player O wins!'
@@ -247,12 +373,80 @@ function App({ isMiniApp, walletReady }: AppProps) {
   }
 
   const canSend = !!address && !needsChainSwitch && !isTxPending
+  const isMenuBusy =
+    isConnecting ||
+    isSwitchingMenu ||
+    isWriting ||
+    menuStatus.state === 'confirming' ||
+    menuStatus.state === 'submitted' ||
+    menuStatus.state === 'switching'
 
   return (
     <div className="app">
-      {!hasStarted ? (
+      {screen === 'menu' ? (
         <section className="panel">
-          <h1>XandO</h1>
+          <div className="panel-header">
+            <h1>Menu</h1>
+            <button className="ghost menu-button" onClick={() => navigateTo('home')} type="button">
+              Back
+            </button>
+          </div>
+          <div className="mode-buttons">
+            <button
+              className="mode-button"
+              onClick={() => handleMenuAction('win')}
+              type="button"
+              disabled={isMenuBusy || !isConnected}
+            >
+              Win
+            </button>
+            <button
+              className="mode-button"
+              onClick={() => handleMenuAction('lose')}
+              type="button"
+              disabled={isMenuBusy || !isConnected}
+            >
+              Lose
+            </button>
+            <button
+              className="mode-button"
+              onClick={() => handleMenuAction('draw')}
+              type="button"
+              disabled={isMenuBusy || !isConnected}
+            >
+              Draw
+            </button>
+          </div>
+          {!isConnected && (
+            <button
+              className="primary"
+              onClick={handleConnectWallet}
+              type="button"
+              disabled={isConnecting}
+            >
+              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+            </button>
+          )}
+          {menuStatus.message && <p className="subtitle">{menuStatus.message}</p>}
+          {menuStatus.hash && (
+            <a
+              className="subtitle"
+              href={`https://basescan.org/tx/${menuStatus.hash}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View on BaseScan
+            </a>
+          )}
+        </section>
+      ) : !hasStarted ? (
+        <section className="panel">
+          <div className="panel-header">
+            <h1>XandO</h1>
+            <button className="ghost menu-button" onClick={() => navigateTo('menu')} type="button">
+              Menu
+            </button>
+          </div>
           <p className="subtitle">Choose your mode to begin.</p>
           <div className="mode-buttons">
             <button

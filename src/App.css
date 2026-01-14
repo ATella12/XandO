@@ -13,6 +13,23 @@
   text-align: center;
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.panel-header h1 {
+  margin: 0;
+}
+
+.menu-button {
+  padding: 8px 14px;
+  font-size: 0.9rem;
+}
+
 .panel.game {
   padding: 28px 24px 32px;
 }
