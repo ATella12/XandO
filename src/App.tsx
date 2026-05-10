@@ -6,13 +6,15 @@ import {
   useConnect,
   useSwitchChain,
   useWaitForTransactionReceipt,
-  useWriteContract,
+  useSendTransaction,
 } from 'wagmi'
 import { base } from 'wagmi/chains'
+import { encodeFunctionData, type Hex } from 'viem'
 import './App.css'
 import WalletPanel from './WalletPanel'
 import { useGameContractTx } from './useGameContractTx'
 import { MENU_TX_VALUE, menuContractAbis, menuContractAddresses } from './lib/menuContracts'
+import { sendXandOTx } from './tx/send'
 
 type Cell = 'X' | 'O' | null
 type Board = Cell[]
@@ -122,7 +124,7 @@ function App({ isMiniApp, walletReady }: AppProps) {
   const chainId = useChainId()
   const { connectAsync, connectors, isPending: isConnecting } = useConnect()
   const { switchChainAsync: switchChainAsyncMenu, isPending: isSwitchingMenu } = useSwitchChain()
-  const { writeContractAsync, isPending: isWriting } = useWriteContract()
+  const { sendTransactionAsync, isPending: isWriting } = useSendTransaction()
   const {
     recordStart,
     recordPlayAgain,
@@ -305,7 +307,7 @@ function App({ isMiniApp, walletReady }: AppProps) {
       try {
         setMenuStatus({ state: 'switching', message: 'Switching to Base...' })
         await switchChainAsyncMenu({ chainId: base.id })
-      } catch (error) {
+      } catch {
         setMenuStatus({ state: 'error', message: 'Please switch to Base to send the transaction.' })
         return
       }
@@ -313,13 +315,26 @@ function App({ isMiniApp, walletReady }: AppProps) {
 
     try {
       setMenuStatus({ state: 'confirming', message: 'Confirm in your wallet...' })
-      const hash = await writeContractAsync({
-        address: menuContractAddresses[action],
+      const data = encodeFunctionData({
         abi: menuContractAbis[action],
         functionName: action,
-        value: MENU_TX_VALUE,
-        chainId: base.id,
       })
+      const result = await sendXandOTx({
+        calls: [
+          {
+            to: menuContractAddresses[action],
+            data: data as Hex,
+            value: MENU_TX_VALUE,
+          },
+        ],
+        chainId: base.id,
+        account: walletAddress ?? undefined,
+        sendTransactionAsync: sendTransactionAsync ?? undefined,
+      })
+      const hash = result.hash ?? undefined
+      if (!hash) {
+        throw new Error('Missing transaction hash.')
+      }
       setMenuTxHash(hash)
       setMenuStatus({ state: 'submitted', message: 'Submitted.', hash })
     } catch (error) {

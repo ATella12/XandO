@@ -1,42 +1,37 @@
 import { Attribution } from 'ox/erc8021'
 import { type Hex } from 'viem'
 
-let didWarnMissing = false
 let didLogActive = false
 
-const getViteEnv = () => (import.meta as any)?.env
-const getNextEnv = () => (typeof process !== 'undefined' ? process.env : undefined)
-const isDev = () => getViteEnv()?.DEV === true || getNextEnv()?.NODE_ENV === 'development'
-const isProd = () => getViteEnv()?.PROD === true || getNextEnv()?.NODE_ENV === 'production'
+type ImportMetaWithEnv = ImportMeta & {
+  env?: Record<string, string | undefined>
+}
 
-export const normalizeHex = (value?: string): Hex => {
+const getViteEnv = () => (import.meta as ImportMetaWithEnv).env
+const isDev = () => getViteEnv()?.DEV === true || getNextEnv()?.NODE_ENV === 'development'
+const getNextEnv = () => (typeof process !== 'undefined' ? process.env : undefined)
+
+export const normalizeHex = (value?: string | null): Hex => {
   if (!value) return '0x'
   if (value === '0x') return '0x'
   return (`0x${value.startsWith('0x') ? value.slice(2) : value}`.toLowerCase()) as Hex
 }
 
-export const ensureHex = (value?: string): Hex | undefined => {
+export const ensureHex = (value?: string | null): Hex | undefined => {
   if (!value) return undefined
   const normalized = normalizeHex(value)
   return normalized === '0x' ? undefined : normalized
 }
 
+const BUILDER_CODE = 'bc_ynopiw2i' as const
+
 export function getBuilderCode(): string | undefined {
-  const viteEnv = getViteEnv()
-  const nextEnv = getNextEnv()
-  const code = viteEnv?.VITE_BASE_BUILDER_CODE ?? nextEnv?.NEXT_PUBLIC_BASE_BUILDER_CODE ?? undefined
-
-  if (!code && isProd() && !didWarnMissing) {
-    console.warn('[Base Attribution] builder code missing in client build; attribution OFF')
-    didWarnMissing = true
-  }
-
-  if (code && isDev() && !didLogActive) {
-    console.log(`[Base Attribution] active: ${code}`)
+  if (isDev() && !didLogActive) {
+    console.log(`[Base Attribution] active: ${BUILDER_CODE}`)
     didLogActive = true
   }
 
-  return code
+  return BUILDER_CODE
 }
 
 export function getForceManualBuilderSuffix(): boolean {
@@ -70,6 +65,10 @@ export function hasDataSuffix(calldata: Hex, dataSuffix?: Hex): boolean {
 
 export function appendBuilderCodeToCallData(calldata: Hex): Hex {
   return appendBuilderCodeToCalldata(calldata, getBuilderCode())
+}
+
+export function ensureBuilderCodeSuffix(calldata?: Hex | string | null): Hex {
+  return appendBuilderCodeToCalldata(normalizeHex(calldata), getBuilderCode())
 }
 
 export function appendSuffixToCall<T extends { data?: Hex }>(call: T, code?: string): T {

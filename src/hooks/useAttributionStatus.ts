@@ -13,18 +13,13 @@ export const useAttributionStatus = () => {
   const builderCodePresent = !!builderCode
   const forceManual = getForceManualBuilderSuffix()
   const dataSuffix = getDataSuffix()
+  const shouldCheckDataSuffix =
+    import.meta.env.DEV && builderCodePresent && !!dataSuffix && !forceManual
+  const effectiveDataSuffixSupported = shouldCheckDataSuffix ? dataSuffixSupported : null
 
   useEffect(() => {
     let active = true
-    if (!import.meta.env.DEV || !builderCodePresent || !dataSuffix) {
-      setDataSuffixSupported(null)
-      return () => {
-        active = false
-      }
-    }
-
-    if (forceManual) {
-      setDataSuffixSupported(false)
+    if (!shouldCheckDataSuffix) {
       return () => {
         active = false
       }
@@ -41,20 +36,20 @@ export const useAttributionStatus = () => {
     return () => {
       active = false
     }
-  }, [builderCodePresent, dataSuffix, forceManual, walletClient])
+  }, [shouldCheckDataSuffix, walletClient])
 
   const mode = useMemo<AttributionMode>(() => {
     if (!builderCodePresent) return 'off'
     if (forceManual) return 'manual'
-    if (dataSuffixSupported === true) return 'capabilities'
-    if (dataSuffixSupported === false) return 'manual'
+    if (effectiveDataSuffixSupported === true) return 'capabilities'
+    if (effectiveDataSuffixSupported === false) return 'manual'
     return 'off'
-  }, [builderCodePresent, dataSuffixSupported, forceManual])
+  }, [builderCodePresent, effectiveDataSuffixSupported, forceManual])
 
   return {
     builderCodePresent,
     builderCode: import.meta.env.DEV ? builderCode : undefined,
-    dataSuffixSupported,
+    dataSuffixSupported: effectiveDataSuffixSupported,
     mode,
   }
 }

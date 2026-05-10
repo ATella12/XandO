@@ -88,22 +88,25 @@ export const useGameContractTx = () => {
 
   useEffect(() => {
     if (!callId || !callsStatus?.status) return
+    const timer = window.setTimeout(() => {
+      if (callsStatus.status === 'success') {
+        const receiptHash = callsStatus.receipts?.[0]?.transactionHash
+        setStatus({ state: 'confirmed', hash: receiptHash })
+        setCallId(null)
+        return
+      }
 
-    if (callsStatus.status === 'success') {
-      const receiptHash = callsStatus.receipts?.[0]?.transactionHash
-      setStatus({ state: 'confirmed', hash: receiptHash })
-      setCallId(null)
-      return
-    }
+      if (callsStatus.status === 'failure') {
+        setStatus({ state: 'error', message: 'Transaction failed.' })
+        setLastError({
+          message: 'Call bundle failed.',
+          details: callsStatus.statusCode ? `statusCode=${callsStatus.statusCode}` : undefined,
+        })
+        setCallId(null)
+      }
+    }, 0)
 
-    if (callsStatus.status === 'failure') {
-      setStatus({ state: 'error', message: 'Transaction failed.' })
-      setLastError({
-        message: 'Call bundle failed.',
-        details: callsStatus.statusCode ? `statusCode=${callsStatus.statusCode}` : undefined,
-      })
-      setCallId(null)
-    }
+    return () => window.clearTimeout(timer)
   }, [callId, callsStatus?.receipts, callsStatus?.status, callsStatus?.statusCode])
 
   const { data: receipt, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
@@ -116,8 +119,11 @@ export const useGameContractTx = () => {
 
   useEffect(() => {
     if (isConfirmed && receipt?.transactionHash) {
-      setStatus({ state: 'confirmed', hash: receipt.transactionHash })
-      setTxHash(null)
+      const timer = window.setTimeout(() => {
+        setStatus({ state: 'confirmed', hash: receipt.transactionHash })
+        setTxHash(null)
+      }, 0)
+      return () => window.clearTimeout(timer)
     }
   }, [isConfirmed, receipt?.transactionHash])
 
